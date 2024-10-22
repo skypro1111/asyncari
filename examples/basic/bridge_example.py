@@ -11,7 +11,7 @@ enters the bridge, a tone is played to the bridge.
 # Copyright (c) 2013, Digium, Inc.
 #
 
-import anyio
+import asyncio
 import asyncari
 import logging
 
@@ -75,9 +75,9 @@ async def main():
         await setup(client)
         client.on_channel_event('StasisStart', stasis_start_cb)
         # Run the WebSocket
-        await anyio.sleep_forever()
+        await asyncio.sleep(float('inf'))
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
-    anyio.run(main)
+    asyncio.run(main)
 

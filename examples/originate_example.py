@@ -10,7 +10,7 @@ endpoint when a Stasis call arrives, and connect the call.
 # Copyright (c) 2018, Matthias Urlichs
 #
 import asyncari
-import anyio
+import asyncio
 import logging
 from asyncari.state import ToplevelChannelState, HangupBridgeState, DTMFHandler, as_task
 from asyncari.model import ChannelExit
@@ -73,7 +73,6 @@ async def main():
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
     try:
-        anyio.run(main)
+        asyncio.run(main)
     except KeyboardInterrupt:
         pass
-

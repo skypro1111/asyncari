@@ -9,7 +9,7 @@
 #
 import asyncari
 from asyncari.util import mayNotExist
-import anyio
+import asyncio
 import logging
 
 from asks.errors import AsksException  # HTTPNotFound, HTTPBadRequest
@@ -124,5 +124,4 @@ async def main():
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
-    anyio.run(main)
-
+    asyncio.run(main)

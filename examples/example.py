@@ -14,7 +14,7 @@ to the channel. Press # to hang up, and * for a special message.
 
 import asyncari
 from asyncari.state import ToplevelChannelState, DTMFHandler
-import anyio
+import asyncio
 import logging
 import asks
 
@@ -75,6 +75,6 @@ async def main():
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
     try:
-        anyio.run(main, backend="trio")
+        asyncio.run(main)
     except KeyboardInterrupt:
         pass

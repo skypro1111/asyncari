@@ -22,7 +22,7 @@ import logging
 import re
 from weakref import WeakValueDictionary
 
-import anyio
+import asyncio
 from asks.errors import BadStatus
 
 from .util import mayNotExist
@@ -96,7 +96,7 @@ class Repository(object):
             def __repr__(self):
                 return "<AttrOp<%s>.%s>" % (self.p, self.item)
 
-            async def __call__(self, **kwargs):
+            async def __call__(**kwargs):
                 oper = getattr(self.p.api, self.item, None)
                 if not (hasattr(oper, '__call__') and hasattr(oper, 'json')):
                     raise AttributeError("'%r' object has no attribute '%s'" % (self.p, self.item))
@@ -216,7 +216,7 @@ class BaseObject(object):
         self.api = getattr(self.client.swagger, self.api)
         self.id = id
         self.event_listeners = {}
-        self._changed = anyio.Event()
+        self._changed = asyncio.Event()
         self._init()
 
     def _init(self):
@@ -230,7 +230,7 @@ class BaseObject(object):
             await self._changed.wait()
 
     async def _has_changed(self):
-        c, self._changed = self._changed, anyio.Event()
+        c, self._changed = self._changed, asyncio.Event()
         c.set()
 
     def remember(self):
@@ -333,7 +333,7 @@ class BaseObject(object):
 
     def __aiter__(self):
         if self._qr is None:
-            self._qw,self._qr = anyio.create_memory_object_stream(QLEN)
+            self._qw,self._qr = asyncio.Queue(QLEN)
         return self
 
     async def __anext__(self):
@@ -344,7 +344,7 @@ class BaseObject(object):
             raise RuntimeError("Another task is waiting")
         try:
             self._waiting = True
-            res = await self._qr.receive()
+            res = await self._qr.get()
         finally:
             if not self._waiting:
                 raise RuntimeError("Another task has waited")
@@ -354,7 +354,7 @@ class BaseObject(object):
     async def aclose(self):
         """No longer queue events"""
         if self._qw is not None:
-            await self._qw.aclose()
+            await self._qw.put(None)
             self._qw = None
             self._qr = None
 
@@ -412,7 +412,7 @@ class Channel(BaseObject):
         if reason is not None:
             self.set_reason(reason)
         if self._reason is None:
-            self._reason_seen = anyio.Event()
+            self._reason_seen = asyncio.Event()
         self.client.taskgroup.start_soon(self._hangup_task)
 
     async def handle_exit(self, reason="normal"):
@@ -431,7 +431,7 @@ class Channel(BaseObject):
 
     async def _hangup_task(self):
         if self._reason is None:
-            with anyio.move_on_after(self.hangup_delay):
+            with asyncio.wait_for(self.hangup_delay):
                 await self._reason_seen.wait()
 
         try:
@@ -651,8 +651,8 @@ class Playback(BaseObject):
     ref = None
 
     def _init(self):
-        self._is_playing = anyio.Event()
-        self._is_done = anyio.Event()
+        self._is_playing = asyncio.Event()
+        self._is_done = asyncio.Event()
         target = self.json.get('target_uri', '')
         if target.startswith('channel:'):
             self.ref = Channel(self.client, id=target[8:])
@@ -693,8 +693,8 @@ class LiveRecording(BaseObject):
     ref = None
 
     def _init(self):
-        self._is_recording = anyio.Event()
-        self._is_done = anyio.Event()
+        self._is_recording = asyncio.Event()
+        self._is_done = asyncio.Event()
         target = self.json.get('target_uri', '')
         if target.startswith('channel:'):
             self.ref = Channel(self.client, id=target[8:])

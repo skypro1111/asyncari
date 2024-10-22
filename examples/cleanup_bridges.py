@@ -7,7 +7,7 @@
 # Copyright (c) 2018, Matthias Urlichs
 #
 import asyncari
-import anyio
+import asyncio
 from asks.errors import BadStatus
 
 import logging
@@ -43,5 +43,4 @@ async def main():
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
-    anyio.run(main)
-
+    asyncio.run(main)

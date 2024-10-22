@@ -12,7 +12,7 @@ import logging
 import math
 from concurrent.futures import CancelledError
 
-import anyio
+import asyncio
 from asks.errors import BadStatus
 from async_generator import asynccontextmanager
 
@@ -126,7 +126,7 @@ class BaseEvtHandler:
     subclass :class:`EvtHandler`, :class:`ChannelState` or
     :class:`BridgeState`.
 
-    You can pass in an `anyio.abc.Event` as the ``ready`` argument to the
+    You can pass in an `asyncio.abc.Event` as the ``ready`` argument to the
     class. It will be set once event processing is set up and the
     ``on_start`` handler has finished.
     """
@@ -172,7 +172,7 @@ class BaseEvtHandler:
     # scope of runner wrapper
     _run_with_scope = None
 
-    def __init__(self, client, taskgroup=None, ready: anyio.abc.Event=None):
+    def __init__(self, client, taskgroup=None, ready: asyncio.abc.Event=None):
         self.client = client
         self._base_tg = taskgroup or client.taskgroup
         self._ready = ready
@@ -184,14 +184,14 @@ class BaseEvtHandler:
 
     async def _run_ctx(self, *, task_status):
         assert self._done is None
-        self._done = anyio.Event()
+        self._done = asyncio.Event()
         async with self.task:  # event loop
             task_status.started()
             await self._done.wait()
 
     async def _task_setup(self):
         assert self._qw is None
-        self._qw,self._qr = anyio.create_memory_object_stream(20)
+        self._qw,self._qr = asyncio.Queue(20)
 
     async def _task_teardown(self):
         if self._qw is not None:
@@ -210,10 +210,10 @@ class BaseEvtHandler:
             raise RuntimeError("Task already running")
 
         yielded = False
-        with anyio.CancelScope() as sc:
+        with asyncio.CancelScope() as sc:
             try:
                 if self._done is None:
-                    self._done = anyio.Event()
+                    self._done = asyncio.Event()
                 self._run_with_exc = None
 
                 self._run_with_scope = sc
@@ -235,7 +235,7 @@ class BaseEvtHandler:
             finally:
                 self._run_with_scope = None
 
-                with anyio.move_on_after(2, shield=True):
+                with asyncio.move_on_after(2, shield=True):
                     await self.done()
 
                     if self._done is not None:
@@ -254,7 +254,7 @@ class BaseEvtHandler:
 
     async def _run_with_tg(self, *, task_status = None):
         try:
-            async with anyio.create_task_group() as tg:
+            async with asyncio.create_task_group() as tg:
                 self._tg = tg
                 await self._task_setup()
                 await self.run(task_status=task_status)
@@ -308,7 +308,7 @@ class BaseEvtHandler:
         if self._qw is not None:
             try:
                 await self._qw.send(evt)
-            except anyio.ClosedResourceError:
+            except asyncio.ClosedResourceError:
                 pass
 
     async def _dispatch(self, evt):
@@ -337,7 +337,7 @@ class BaseEvtHandler:
         Override+call this e.g. for overall timeouts::
 
             async def run(self):
-                with anyio.fail_after(30):
+                with asyncio.fail_after(30):
                     await super().run()
 
         This method creates a runner task that do the actual event processing.
@@ -352,15 +352,15 @@ class BaseEvtHandler:
         if self._ready is not None:
             self._ready.set()
 
-        self._proc_lock = anyio.Lock()
+        self._proc_lock = asyncio.Lock()
         while True:
             if self._n_proc == 0:
                 self.taskgroup.start_soon(self._process, name="Worker " + self.ref_id)
-            self._proc_check = anyio.Event()
-            await anyio.sleep(0.1)
+            self._proc_check = asyncio.Event()
+            await asyncio.sleep(0.1)
             await self._proc_check.wait()
 
-    async def _process(self, evt: anyio.abc.Event=None):
+    async def _process(self, evt: asyncio.abc.Event=None):
         if evt is not None:
             evt.set()
         try:
@@ -381,7 +381,7 @@ class BaseEvtHandler:
                 try:
                     success = await self._dispatch(evt)
                 except BaseException as exc:
-                    with anyio.fail_after(2, shield=True):
+                    with asyncio.fail_after(2, shield=True):
                         await self._handle_prev(evt)
                     raise
                 else:
@@ -400,7 +400,7 @@ class BaseEvtHandler:
                 type = "MyTimeout"
 
             async def get_event():
-                with anyio.move_on_after(30):
+                with asyncio.move_on_after(30):
                     return await super().get_event()
                 return TimeoutEvent()
 
@@ -550,8 +550,8 @@ class AsyncEvtHandler(_EvtHandler):
     async def _run_with_tg(self, **kw):
         try:
             await super()._run_with_tg(**kw)
-        except anyio.get_cancelled_exc_class():
-            with anyio.fail_after(2, shield=True):
+        except asyncio.get_cancelled_exc_class():
+            with asyncio.fail_after(2, shield=True):
                 if self._done.is_set():
                     await self._handle_prev(_ResultEvent(self._result))
                 else:
@@ -560,7 +560,7 @@ class AsyncEvtHandler(_EvtHandler):
         except Exception as exc:
             await self._handle_prev(_ErrorEvent(exc))
         except BaseException:
-            with anyio.fail_after(2, shield=True):
+            with asyncio.fail_after(2, shield=True):
                 await self._handle_prev(_ErrorEvent(CancelledError()))
             raise
         else:
@@ -734,14 +734,14 @@ class BridgeState(_ThingEvtHandler):
         return await super()._task_setup()
 
     async def _task_teardown(self, *tb):
-        with anyio.fail_after(2, shield=True):
+        with asyncio.fail_after(2, shield=True):
             await self.teardown()
             return await super()._task_teardown(*tb)
 
             # Any unprocessed events get relegated to the parent
             while True:
                 try:
-                    with anyio.fail_after(0.001):
+                    with asyncio.fail_after(0.001):
                         if self._qr is None:
                             break
                         evt = self._qr.get()
@@ -792,7 +792,7 @@ class BridgeState(_ThingEvtHandler):
         try:
             await ch.wait_up()
         except BaseException:
-            with anyio.move_on_after(2, shield=True) as s:
+            with asyncio.move_on_after(2, shield=True) as s:
                 await ch.hang_up()
                 await ch.wait_down()
             raise
@@ -952,7 +952,7 @@ class BridgeState(_ThingEvtHandler):
         """
         if self.bridge is None:
             return
-        with anyio.move_on_after(2, shield=True) as s:
+        with asyncio.move_on_after(2, shield=True) as s:
             log.info("TEARDOWN %s %s", self, self.bridge.channels)
             for ch in self.bridge.channels | self.calls:
                 try:
@@ -996,7 +996,7 @@ class ToplevelChannelState(ChannelState):
         except StateError:
             pass
         finally:
-            with anyio.fail_after(2, shield=True) as s:
+            with asyncio.fail_after(2, shield=True) as s:
                 await self.channel.handle_exit()
 
     async def hang_up(self, reason="normal"):
@@ -1034,19 +1034,19 @@ class CallManager:
         if timeout is None:
             timeout = math.inf
 
-        with anyio.fail_after(timeout):
+        with asyncio.fail_after(timeout):
             self.channel = ch = self.bridge.dial(**self.kw)
         if self.State is not None:
             try:
                 self.state = state = self.State(ch)
                 await state.start_task()
             except BaseException:
-                with anyio.CancelScope(shield=True):
+                with asyncio.CancelScope(shield=True):
                     await ch.hangup()
                 raise
 
     async def __aexit__(self, *exc):
-        with anyio.fail_after(2, shield=True):
+        with asyncio.fail_after(2, shield=True):
             if self.state is None:
                 await self.state.hang_up()
             else:
@@ -1115,31 +1115,31 @@ class _ReadNumber(DTMFHandler):
             except BadStatus:
                 pass
 
-    async def _digit_timer_(self, evt: anyio.abc.Event=None):
-        self._digit_deadline = self.first_digit_timeout + await anyio.current_time()
-        with anyio.CancelScope() as sc:
+    async def _digit_timer_(self, evt: asyncio.abc.Event=None):
+        self._digit_deadline = self.first_digit_timeout + await asyncio.current_time()
+        with asyncio.CancelScope() as sc:
             self._digit_timer = sc
             if evt is not None:
                 evt.set()
             while True:
-                delay = self._digit_deadline - await anyio.current_time()
+                delay = self._digit_deadline - await asyncio.current_time()
                 if delay <= 0:
                     await self._stop_playing()
                     raise DigitTimeoutError(self.num) from None
-                await anyio.sleep(delay)
+                await asyncio.sleep(delay)
 
-    async def _total_timer_(self, evt: anyio.abc.Event=None):
-        self._total_deadline = self.total_timeout + await anyio.current_time()
-        with anyio.CancelScope() as sc:
+    async def _total_timer_(self, evt: asyncio.abc.Event=None):
+        self._total_deadline = self.total_timeout + await asyncio.current_time()
+        with asyncio.CancelScope() as sc:
             self._total_timer = sc
             if evt is not None:
                 evt.set()
             while True:
-                delay = self._total_deadline - await anyio.current_time()
+                delay = self._total_deadline - await asyncio.current_time()
                 if delay <= 0:
                     await self._stop_playing()
                     raise NumberTimeoutError(self.num) from None
-                await anyio.sleep(delay)
+                await asyncio.sleep(delay)
 
     async def done(self, res):
         await super().done(res)
@@ -1166,7 +1166,7 @@ class _ReadNumber(DTMFHandler):
         await self.set_timeout()
 
     async def set_timeout(self):
-        self._digit_deadline = (await anyio.current_time()
+        self._digit_deadline = (await asyncio.current_time()
                                 ) + (self.digit_timeout if self.num else self.first_digit_timeout)
 
 

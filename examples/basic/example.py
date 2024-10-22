@@ -12,7 +12,7 @@ to the channel. Press # to hang up, and * for a special message.
 #
 
 import asyncari
-import anyio
+import asyncio
 import logging
 
 import os
@@ -39,7 +39,7 @@ async def on_dtmf(event, channel):
     """
     digit = event['digit']
     print(digit)
-    await anyio.sleep(0.01)
+    await asyncio.sleep(0.01)
     if digit == '#':
         channel.on_event("PlaybackFinished", do_hangup, channel)
         await channel.play(media='sound:vm-goodbye')
@@ -59,7 +59,7 @@ async def on_start(objs, event):
     :param event: Event.
     """
     channel = objs['channel']
-    await anyio.sleep(0.01)
+    await asyncio.sleep(0.01)
     #r = await channel.getChannelVar(variable="CALLERID(num)")
     #t = await channel.getChannelVar(variable="CALLERID(ton)")
     #print("** START **", channel, t,r,event)
@@ -85,4 +85,4 @@ async def main():
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
-    anyio.run(main)
+    asyncio.run(main)
