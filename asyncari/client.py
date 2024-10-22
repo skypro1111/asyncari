@@ -13,7 +13,7 @@ import time
 import urllib
 from pprint import pformat
 
-import anyio
+import asyncio
 from asyncswagger11.client import SwaggerClient
 from wsproto.events import CloseConnection, TextMessage
 
@@ -31,7 +31,7 @@ class _EventHandler(object):
     """
 
     def __init__(self, client, event_type, mangler=None, filter=None):
-        self.send_stream, self.receive_stream = anyio.create_memory_object_stream()
+        self.send_stream, self.receive_stream = asyncio.Queue()
         self.client = client
         self.event_type = event_type
         self.mangler = mangler
@@ -45,7 +45,7 @@ class _EventHandler(object):
     async def __call__(self, msg):
         if not self.filter(msg):
             return
-        await self.send_stream.send(msg)
+        await self.send_stream.put(msg)
 
     def open(self):
         log.debug("ADD %s", self.event_type)
@@ -67,7 +67,7 @@ class _EventHandler(object):
 
     async def __anext__(self):
         while True:
-            res = await self.receive_stream.receive()
+            res = await self.receive_stream.get()
             if self.mangler:
                 res = self.mangler(res)
                 if res is None:
@@ -112,13 +112,13 @@ class Client:
 
     async def __aenter__(self):
         await self._init()
-        evt = anyio.Event()
+        evt = asyncio.Event()
         self.taskgroup.start_soon(self._run, evt)
         await evt.wait()
         return self
 
     async def __aexit__(self, *tb):
-        with anyio.fail_after(1, shield=True) as scope:
+        with asyncio.wait_for(1, shield=True) as scope:
             await self.close()
 
     async def new_channel(self, State, endpoint, **kw):
@@ -163,7 +163,7 @@ class Client:
     def app(self):
         return self._apps[0]
 
-    async def _run(self, evt: anyio.Event=None):
+    async def _run(self, evt: asyncio.Event=None):
         """Connect to the WebSocket and begin processing messages.
 
         This method will block until all messages have been received from the
@@ -190,7 +190,7 @@ class Client:
         finally:
             if ws is not None:
                 self.websockets.remove(ws)
-                with anyio.CancelScope(shield=True):
+                with asyncio.CancelledError(shield=True):
                     await ws.close()
 
 
@@ -199,28 +199,28 @@ class Client:
         when it ends. Repeat.
         """
         while True:
-            msg = await recv.receive()
+            msg = await recv.get()
             if msg is False:
                 return
             assert msg is not None
 
             try:
-                with anyio.fail_after(0.5):
-                    msg = await recv.receive()
+                with asyncio.wait_for(0.5):
+                    msg = await recv.get()
                     if msg is False:
                         return
                     assert msg is None
             except TimeoutError:
                 log.error("Processing delayed: %s", msg)
-                t = anyio.current_time()
+                t = asyncio.get_event_loop().time()
                 # don't hard-fail that fast when debugging
-                with anyio.fail_after(1 if 'pdb' not in sys.modules else 99):
-                    msg = await recv.receive()
+                with asyncio.wait_for(1 if 'pdb' not in sys.modules else 99):
+                    msg = await recv.get()
                     if msg is False:
                         return
                     assert msg is None, msg
                     pass  # processing delayed, you have a problem
-                log.error("Processing recovered after %.2f sec", (anyio.current_time()) - t)
+                log.error("Processing recovered after %.2f sec", (asyncio.get_event_loop().time()) - t)
 
     async def __run(self, ws):
         """Drains all messages from a WebSocket, sending them to the client's
@@ -229,7 +229,7 @@ class Client:
         :param ws: WebSocket to drain.
         """
 
-        send_stream, receive_stream = anyio.create_memory_object_stream()
+        send_stream, receive_stream = asyncio.Queue()
 
         self.taskgroup.start_soon(self._check_runtime, receive_stream)
 
@@ -237,7 +237,7 @@ class Client:
         while True:
             try:
                 msg = await ws_.__anext__()
-            except (StopAsyncIteration,anyio.ClosedResourceError):
+            except (StopAsyncIteration,asyncio.ClosedResourceError):
                 break
 
             if isinstance(msg, CloseConnection):
@@ -250,11 +250,11 @@ class Client:
                 log.error("Invalid event: %s", msg)
                 continue
             try:
-                await send_stream.send(msg_json)
+                await send_stream.put(msg_json)
                 await self.process_ws(msg_json)
             finally:
-                await send_stream.send(None)
-        await send_stream.send(False)
+                await send_stream.put(None)
+        await send_stream.put(False)
 
     async def _init(self, RepositoryFactory=Repository):
         await self.swagger.init()

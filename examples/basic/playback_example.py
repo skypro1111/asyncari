@@ -10,7 +10,7 @@ are used to control the playback.
 # Copyright (c) 2013, Digium, Inc.
 #
 
-import anyio
+import asyncio
 import asyncari
 import sys
 import logging
@@ -76,5 +76,4 @@ async def main():
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
-    anyio.run(main)
-
+    asyncio.run(main)

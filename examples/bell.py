@@ -50,7 +50,7 @@ codes will be ignored.
 #
 import asyncari
 import sys
-import anyio
+import asyncio
 import logging
 import asyncclick as click
 from contextlib import asynccontextmanager
@@ -146,9 +146,9 @@ class DoorState(ToplevelChannelState, DTMFHandler):
         super().__init__(channel)
 
     async def do_open(self):
-        await anyio.sleep(self.opener)
+        await asyncio.sleep(self.opener)
         await self.obj.dkv.set(self.obj.cfg.door.opener, value=True, idem=False)
-        await anyio.sleep(1)
+        await asyncio.sleep(1)
         self.obj.block_done = False
 
     async def player(self):
@@ -164,7 +164,7 @@ class DoorState(ToplevelChannelState, DTMFHandler):
             playback_id = str(uuid.uuid4())
             self.obj.log.warning("Play beep")
             p = await self.channel.playWithId(playbackId=playback_id,media="tone:beep;tonezone=de")
-            await anyio.sleep(0.7)
+            await asyncio.sleep(0.7)
             try:
                 await p.stop()
             except asks.errors.BadStatus:
@@ -178,7 +178,7 @@ class DoorState(ToplevelChannelState, DTMFHandler):
 
         if self.opener is True:
             await self.obj.dkv.set(self.obj.cfg.door.opener, value=True, idem=False)
-            await anyio.sleep(1)
+            await asyncio.sleep(1)
             self.obj.block_done = False
 
 
@@ -260,11 +260,11 @@ class CallerState(_CallState):
 
         async with with_bridge(self.obj) as br:
             await self.channel.answer()
-            evt = anyio.Event()
+            evt = asyncio.Event()
             async def sub():
                 playback_id = str(uuid.uuid4())
                 p = await self.channel.playWithId(playbackId=playback_id,media="tone:beep;tonezone=de")
-                await anyio.sleep(0.7)
+                await asyncio.sleep(0.7)
                 await p.stop()
                 try:
                     await br.add(self.channel)
@@ -284,12 +284,12 @@ async def _run_bridge(obj, *, task_status):
     br = None
     try:
         obj.log.info("Setting up bridge")
-        with anyio.CancelScope() as sc:
+        with asyncio.CancelledError() as sc:
             async with HangupBridgeState.new(obj.ari, name=obj.cfg.asterisk.bridge_name) as br:
                 obj.bridge.br = br
                 obj.bridge.scope = sc
                 task_status.started()
-                with anyio.move_on_after(obj.cfg.max_time):
+                with asyncio.move_on_after(obj.cfg.max_time):
                     await br  # waits for end
     except BaseException as exc:
         obj.log.exception("Bridge? %r",exc)
@@ -376,7 +376,7 @@ async def monitor_phone_calls(obj):
     obj.bridge.task = None
     obj.bridge.br = None
     obj.bridge.scope = None
-    obj.bridge.lock = anyio.Lock()
+    obj.bridge.lock = asyncio.Lock()
     obj.bridge.cnt = 0
     obj.door = attrdict()
     obj.door.state = None
@@ -399,7 +399,7 @@ async def _call(obj,n,dest,cid):
     """
     Call handler to a single phone.
     """
-    with anyio.CancelScope() as sc:
+    with asyncio.CancelledError() as sc:
         obj.calls.data[n] = sc
         try:
             ch = await obj.bridge.br.dial(endpoint=dest, State=partial(CalleeState,obj,n), callerId=cid)
@@ -430,7 +430,7 @@ async def door_call(obj, audio=True, opener=None):
             raise RuntimeError("Door call failed")
         return
 
-    obj.door.state = e = anyio.Event()
+    obj.door.state = e = asyncio.Event()
     async with with_bridge(obj) as br:
         try:
             r = await br.dial(endpoint=obj.cfg.door.phone, State=partial(DoorState,obj,audio=audio,opener=opener))
@@ -462,7 +462,7 @@ async def call_phones(obj,name,c):
         obj.calls.data.append(None)
         obj.bridge.br._tg.start_soon(_call,obj,n,dest,cid)
 
-    with anyio.move_on_after(obj.cfg.max_time):
+    with asyncio.move_on_after(obj.cfg.max_time):
         await obj.calls.evt.wait()
     for cs in obj.calls.data:
         if cs is not None:
@@ -470,20 +470,20 @@ async def call_phones(obj,name,c):
 
 async def monitor_watchdog(obj):
     wd = obj.cfg.watchdog
-    evt = anyio.Event()
+    evt = asyncio.Event()
 
     async def mon():
         nonlocal evt
         async with obj.dkv.watch(wd.path, max_depth=0, fetch=False) as mon:
             async for evt in mon:
                 evt.set()
-                evt = anyio.Event()
+                evt = asyncio.Event()
             raise RuntimeError("Watchdog ended")
 
-    async with anyio.create_task_group() as tg:
+    async with asyncio.create_task_group() as tg:
         tg.start(mon)
         while True:
-            with anyio.fail_after(wd.timeout):
+            with asyncio.wait_for(wd.timeout):
                 await evt.wait()
 
 
@@ -522,7 +522,7 @@ async def call_from_door(obj,name,c):
                 return
             obj.log.info("from door: %s: Connected to door (%r)", name, br.bridge.channels)
             obj.calls.data = []
-            obj.calls.evt = anyio.Event()
+            obj.calls.evt = asyncio.Event()
 
             await call_phones(obj,name,c)
             if r.channel.bridge is None:
@@ -602,7 +602,7 @@ async def monitor_done(obj,name,c):
         obj.log.exception("Owch %r %r",name,c)
 
 async def monitor_sig(obj):
-    with anyio.open_signal_receiver(signal.SIGUSR1) as mon:
+    with asyncio.open_signal_receiver(signal.SIGUSR1) as mon:
         async for _ in mon:
             pprint(obj, sys.stderr)
 
@@ -630,7 +630,7 @@ async def main(ctx, verbose,quiet,cfg):
 
     await bridge_cleanup(obj)
 
-    async with anyio.create_task_group() as obj.task:
+    async with asyncio.create_task_group() as obj.task:
         for name,c in obj.cfg.calls.items():
             obj.task.start_soon(monitor_call, obj,name,c)
         for name,c in obj.cfg.done.items():

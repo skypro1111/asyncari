@@ -6,7 +6,7 @@
 
 import urllib.parse
 
-import anyio
+import asyncio
 from async_generator import asynccontextmanager
 from asyncswagger11.http_client import AsynchronousHttpClient, ApiKeyAuthenticator
 
@@ -31,7 +31,7 @@ async def connect(base_url, apps, username, password):
     host = urllib.parse.urlparse(base_url).netloc.split(':')[0]
     http_client = AsynchronousHttpClient(auth=ApiKeyAuthenticator(host, username + ':' + password))
     try:
-        async with anyio.create_task_group() as tg:
+        async with asyncio.gather() as tg:
             client = Client(tg, base_url, apps, http_client)
             async with client:
                 try:
